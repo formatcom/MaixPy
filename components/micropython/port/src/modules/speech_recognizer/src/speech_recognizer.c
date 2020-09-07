@@ -42,7 +42,7 @@ TaskHandle_t sr_task_handle;
 extern v_ftr_tag *ftr_save;
 
 extern volatile bool ide_get_script_status();
-uint16_t VcBuf[atap_len];
+// uint16_t VcBuf[atap_len];
 atap_tag atap_arg;
 valid_tag valid_voice[max_vc_con];
 v_ftr_tag ftr;
@@ -59,7 +59,7 @@ v_ftr_tag *pftr_mdl_temp[10];
 
 uint16_t rx_buf[FRAME_LEN];
 uint32_t g_rx_dma_buf[FRAME_LEN * 2];
-uint64_t fft_out_data[FFT_N / 2];
+// uint64_t fft_out_data[FFT_N / 2];
 
 volatile uint32_t g_index;
 volatile uint8_t uart_rec_flag;
@@ -80,7 +80,7 @@ int sr_recognizer_result = -1;
 uint8_t sr_action = 0;
 uint32_t sr_record_addr = 0;
 uint8_t comm;
-static const char *TAG = "SpeechRecognizer";
+static const char *TAG = __FILE__;
 
 uint8_t speech_recognizer_save_mdl(uint16_t *v_dat, uint32_t addr);
 uint8_t speech_recognizer_spch_recg(uint16_t *v_dat, uint32_t *mtch_dis);
@@ -107,7 +107,7 @@ int i2s_dma_irq(void *ctx)
         int16_t s_tmp;
         if (g_index)
         {
-            i2s_receive_data_dma(*i2s_num, &g_rx_dma_buf[g_index], frame_mov * 2, DMAC_CHANNEL3);
+            i2s_receive_data_dma(*i2s_num, &g_rx_dma_buf[g_index], frame_mov, DMAC_CHANNEL3);
             g_index = 0;
             for (i = 0; i < frame_mov; i++)
             {
@@ -144,13 +144,13 @@ void sr_task(void *arg)
     uint8_t res;
     uint32_t dis;
     mp_printf(&mp_plat_print, "[MaixPy] sr_task start\n");
-    sr_status = SR_NONE;
+    sr_status = SR_ERROR;
     while (1)
     {
         if (sr_action == 0)
         {
             vTaskDelay(50 / portTICK_PERIOD_MS);
-            sr_status = SR_NONE;
+            sr_status = SR_ERROR;
             // mp_printf(&mp_plat_print, "[MaixPy] sr_task runing...\n");
             if (ide_get_script_status() == false)
             {
@@ -179,17 +179,17 @@ void sr_task(void *arg)
         }
         else if (sr_action == 2)
         {
-            // mp_printf(&mp_plat_print, "[MaixPy] SR_RECOGNIZER_WAIT_SPEACKING...\n");
-            sr_status = SR_RECOGNIZER_WAIT_SPEACKING;
+            // mp_printf(&mp_plat_print, "[MaixPy] SR_RECOGNIZER_WORKING...\n");
+            sr_status = SR_RECOGNIZER_WORKING;
             res = speech_recognizer_spch_recg(VcBuf, &dis);
             if (dis != dis_err)
                 sr_recognizer_result = res;
             else
                 sr_recognizer_result = -1;
             sr_action = 0;
-            sr_status = SR_RECOGNIZER_SUCCESSFULL;
+            sr_status = SR_RECOGNIZER_FINISH;
             vTaskSuspend(sr_task_handle);
-            // mp_printf(&mp_plat_print, "[MaixPy] SR_RECOGNIZER_SUCCESSFULL\n");
+            // mp_printf(&mp_plat_print, "[MaixPy] SR_RECOGNIZER_FINISH\n");
         }
     }
 }
@@ -204,6 +204,12 @@ int speech_recognizer_finish(void)
 }
 
 #endif
+
+int speech_recognizer_finish(void)
+{
+    return 0;
+}
+
 #endif
 int speech_recognizer_get_result(void)
 {
@@ -214,7 +220,6 @@ int speech_recognizer_get_result(void)
 
 int speech_recognizer_init(Maix_i2s_obj_t *dev)
 {
-
     dmac_init();
     dmac_set_irq(DMAC_CHANNEL3, i2s_dma_irq, (void *)dev->i2s_num, 3);
     i2s_receive_data_dma(dev->i2s_num, &g_rx_dma_buf[0], frame_mov * 2, DMAC_CHANNEL3);
@@ -258,14 +263,14 @@ int speech_recognizer_record(uint8_t keyword_num, uint8_t model_num)
     sr_record_addr = addr;
     vTaskResume(sr_task_handle);
 #else
-    if (speech_recognizer_save_mdl(VcBuf, addr) == save_ok)
-    {
-        return 0;
-    }
-    else
-    {
-        return -3;
-    }
+    // if (speech_recognizer_save_mdl(VcBuf, addr) == save_ok)
+    // {
+    //     return 0;
+    // }
+    // else
+    // {
+    //     return -3;
+    // }
 #endif
     return 0;
 }
@@ -286,12 +291,14 @@ int speech_recognizer_recognize(void)
     vTaskResume(sr_task_handle);
     return 0;
 #else
-    res = speech_recognizer_spch_recg(VcBuf, &dis);
-    if (dis != dis_err)
-        return res;
-    else
-        return -1;
+    // res = speech_recognizer_spch_recg(VcBuf, &dis);
+    // if (dis != dis_err)
+    //     return res;
+    // else
+    //     return -1;
+    return -1;
 #endif
+
 }
 
 int speech_recognizer_add_voice_model(uint8_t keyword_num, uint8_t model_num, const int16_t *voice_model, uint16_t frame_num)
@@ -314,255 +321,301 @@ int speech_recognizer_get_data(uint8_t keyword_num, uint8_t model_num, uint16_t 
 
 uint8_t speech_recognizer_save_mdl(uint16_t *v_dat, uint32_t addr)
 {
-    uint16_t i, num;
-    uint16_t frame_index;
-get_noise1:
-    frame_index = 0;
-    num = atap_len / frame_mov;
-    //wait for finish
-    while (1)
-    {
-        while (i2s_rec_flag == 0)
-        {
-            if (ide_get_script_status() == false)
-                return 0;
-        }
-        if (i2s_rec_flag == 1)
-        {
-            for (i = 0; i < frame_mov; i++)
-                v_dat[frame_mov * frame_index + i] = rx_buf[i];
-        }
-        else
-        {
-            for (i = 0; i < frame_mov; i++)
-                v_dat[frame_mov * frame_index + i] = rx_buf[i + frame_mov];
-        }
-        i2s_rec_flag = 0;
-        frame_index++;
-        if (frame_index >= num)
-            break;
-    }
+    return 1;
+//     return ;
+//     uint16_t i, num;
+//     uint16_t frame_index;
+// get_noise1:
+//     const int frame_index = 0;
+//     const int num = atap_len / frame_mov;
+//     //wait for finish
+//     while (1)
+//     {
+//         while (i2s_rec_flag == 0)
+//         {
+//             if (ide_get_script_status() == false)
+//                 return 0;
+//         }
+//         if (i2s_rec_flag == 1)
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//                 v_dat[frame_mov * frame_index + i] = rx_buf[i];
+//         }
+//         else
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//                 v_dat[frame_mov * frame_index + i] = rx_buf[i + frame_mov];
+//         }
+//         i2s_rec_flag = 0;
+//         frame_index++;
+//         if (frame_index >= num)
+//             break;
+//     }
+//     // const int t = atap_len;
+//     noise_atap(v_dat, atap_len, &atap_arg);
+//     if (atap_arg.s_thl > user_atap_arg.s_thl)
+//     {
+//         sr_status = SR_GET_NOISEING;
+//         mp_printf(&mp_plat_print, "[MaixPy] get noise again...\n");
+//         goto get_noise1;
+//     }
+//     sr_status = SR_RECORD_WAIT_SPEACKING;
+//     mp_printf(&mp_plat_print, "[MaixPy] Please speaking...\n");
+//     //wait for finish
+//     while (i2s_rec_flag == 0)
+//     {
+//         if (ide_get_script_status() == false)
+//             return 0;
+//     }
+//     if (i2s_rec_flag == 1)
+//     {
+//         for (i = 0; i < frame_mov; i++)
+//             v_dat[i + frame_mov] = rx_buf[i];
+//     }
+//     else
+//     {
+//         for (i = 0; i < frame_mov; i++)
+//             v_dat[i + frame_mov] = rx_buf[i + frame_mov];
+//     }
+//     i2s_rec_flag = 0;
+//     while (1)
+//     {
+//         while (i2s_rec_flag == 0)
+//         {
+//             if (ide_get_script_status() == false)
+//                 return 0;
+//         }
+//         if (i2s_rec_flag == 1)
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//             {
+//                 v_dat[i] = v_dat[i + frame_mov];
+//                 v_dat[i + frame_mov] = rx_buf[i];
+//             }
+//         }
+//         else
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//             {
+//                 v_dat[i] = v_dat[i + frame_mov];
+//                 v_dat[i + frame_mov] = rx_buf[i + frame_mov];
+//             }
+//         }
+//         i2s_rec_flag = 0;
+//         if (VAD2(v_dat, valid_voice, &atap_arg) == 1)
+//             break;
+//         if (receive_char == 's')
+//             return MFCC_fail;
+//     }
+//     //  if (valid_voice[0].end == ((void *)0)) {
+//     //      LOGI(TAG, "VAD_fail\n");
+//     //      return VAD_fail;
+//     //  }
 
-    noise_atap(v_dat, atap_len, &atap_arg);
-    if (atap_arg.s_thl > user_atap_arg.s_thl)
-    {
-        sr_status = SR_GET_NOISEING;
-        mp_printf(&mp_plat_print, "[MaixPy] get noise again...\n");
-        goto get_noise1;
-    }
-    sr_status = SR_RECORD_WAIT_SPEACKING;
-    mp_printf(&mp_plat_print, "[MaixPy] Please speaking...\n");
-    //wait for finish
-    while (i2s_rec_flag == 0)
-    {
-        if (ide_get_script_status() == false)
-            return 0;
-    }
-    if (i2s_rec_flag == 1)
-    {
-        for (i = 0; i < frame_mov; i++)
-            v_dat[i + frame_mov] = rx_buf[i];
-    }
-    else
-    {
-        for (i = 0; i < frame_mov; i++)
-            v_dat[i + frame_mov] = rx_buf[i + frame_mov];
-    }
-    i2s_rec_flag = 0;
-    while (1)
-    {
-        while (i2s_rec_flag == 0)
-        {
-            if (ide_get_script_status() == false)
-                return 0;
-        }
-        if (i2s_rec_flag == 1)
-        {
-            for (i = 0; i < frame_mov; i++)
-            {
-                v_dat[i] = v_dat[i + frame_mov];
-                v_dat[i + frame_mov] = rx_buf[i];
-            }
-        }
-        else
-        {
-            for (i = 0; i < frame_mov; i++)
-            {
-                v_dat[i] = v_dat[i + frame_mov];
-                v_dat[i + frame_mov] = rx_buf[i + frame_mov];
-            }
-        }
-        i2s_rec_flag = 0;
-        if (VAD2(v_dat, valid_voice, &atap_arg) == 1)
-            break;
-        if (receive_char == 's')
-            return MFCC_fail;
-    }
-    //  if (valid_voice[0].end == ((void *)0)) {
-    //      LOGI(TAG, "VAD_fail\n");
-    //      return VAD_fail;
-    //  }
-
-    get_mfcc(&(valid_voice[0]), &ftr, &atap_arg);
-    if (ftr.frm_num == 0)
-    {
-        //LOGI(TAG, "MFCC_fail\n");
-        return MFCC_fail;
-    }
-    //  ftr.word_num = valid_voice[0].word_num;
-    return save_ftr_mdl(&ftr, addr);
-    //  ftr_mdl_temp[addr] = ftr;
-    //  return save_ok;
+//     get_mfcc(&(valid_voice[0]), &ftr, &atap_arg);
+//     if (ftr.frm_num == 0)
+//     {
+//         //LOGI(TAG, "MFCC_fail\n");
+//         return MFCC_fail;
+//     }
+//     //  ftr.word_num = valid_voice[0].word_num;
+//     return save_ftr_mdl(&ftr, addr);
+//     //  ftr_mdl_temp[addr] = ftr;
+//     //  return save_ok;
 }
+
+// bool speech_recognizer_check_noise(uint8_t [])
+// {
+
+// }
+
+// void speech_recognizer_resampling(uint16_t *v_dat, uint32_t *mtch_dis)
+// {
+//     frame_index = 0;
+//     num = atap_len / frame_mov;
+//     //wait for finish
+//     i2s_rec_flag = 0;
+//     while (1)
+//     {
+//         while (i2s_rec_flag == 0)
+//         {
+//             if (ide_get_script_status() == false)
+//                 return 0;
+//         }
+//         if (i2s_rec_flag == 1)
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//                 v_dat[frame_mov * frame_index + i] = rx_buf[i];
+//         }
+//         else
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//                 v_dat[frame_mov * frame_index + i] = rx_buf[i + frame_mov];
+//         }
+//         i2s_rec_flag = 0;
+//         frame_index++;
+//         if (frame_index >= num)
+//             break;
+//     }
+//     noise_atap(v_dat, atap_len, &atap_arg);
+//     if (atap_arg.s_thl > user_atap_arg.s_thl)
+//     {
+//         sr_status = SR_GET_NOISEING;
+//         mp_printf(&mp_plat_print, "[MaixPy] get noise again...\n");
+//     }
+//     return sr_status;
+// }
 
 uint8_t speech_recognizer_spch_recg(uint16_t *v_dat, uint32_t *mtch_dis)
 {
-    uint16_t i;
-    uint32_t ftr_addr;
-    uint32_t min_dis;
-    uint16_t min_comm;
-    uint32_t cur_dis;
-    v_ftr_tag *ftr_mdl;
-    uint16_t num;
-    uint16_t frame_index;
-    uint32_t cycle0, cycle1;
+    return 1;
+//     uint16_t i;
+//     uint32_t ftr_addr;
+//     uint32_t min_dis;
+//     uint16_t min_comm;
+//     uint32_t cur_dis;
+//     v_ftr_tag *ftr_mdl;
+//     uint16_t num;
+//     uint16_t frame_index;
+//     uint32_t cycle0, cycle1;
 
-get_noise2:
-    frame_index = 0;
-    num = atap_len / frame_mov;
-    //wait for finish
-    i2s_rec_flag = 0;
-    while (1)
-    {
-        while (i2s_rec_flag == 0)
-        {
-            if (ide_get_script_status() == false)
-                return 0;
-        }
-        if (i2s_rec_flag == 1)
-        {
-            for (i = 0; i < frame_mov; i++)
-                v_dat[frame_mov * frame_index + i] = rx_buf[i];
-        }
-        else
-        {
-            for (i = 0; i < frame_mov; i++)
-                v_dat[frame_mov * frame_index + i] = rx_buf[i + frame_mov];
-        }
-        i2s_rec_flag = 0;
-        frame_index++;
-        if (frame_index >= num)
-            break;
-    }
-    noise_atap(v_dat, atap_len, &atap_arg);
-    if (atap_arg.s_thl > user_atap_arg.s_thl)
-    {
-        sr_status = SR_GET_NOISEING;
-        mp_printf(&mp_plat_print, "[MaixPy] get noise again...\n");
-        goto get_noise2;
-    }
-    sr_status = SR_RECOGNIZER_WAIT_SPEACKING;
-    mp_printf(&mp_plat_print, "[MaixPy] Please speaking...\n");
+// get_noise2:
+//     frame_index = 0;
+//     const int num = atap_len / frame_mov;
+//     //wait for finish
+//     i2s_rec_flag = 0;
+//     while (1)
+//     {
+//         while (i2s_rec_flag == 0)
+//         {
+//             if (ide_get_script_status() == false)
+//                 return 0;
+//         }
+//         if (i2s_rec_flag == 1)
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//                 v_dat[frame_mov * frame_index + i] = rx_buf[i];
+//         }
+//         else
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//                 v_dat[frame_mov * frame_index + i] = rx_buf[i + frame_mov];
+//         }
+//         i2s_rec_flag = 0;
+//         frame_index++;
+//         if (frame_index >= num)
+//             break;
+//     }
+//     noise_atap(v_dat, atap_len, &atap_arg);
+//     if (atap_arg.s_thl > user_atap_arg.s_thl)
+//     {
+//         sr_status = SR_GET_NOISEING;
+//         mp_printf(&mp_plat_print, "[MaixPy] get noise again...\n");
+//         goto get_noise2;
+//     }
+//     sr_status = SR_RECOGNIZER_WORKING;
+//     mp_printf(&mp_plat_print, "[MaixPy] Please speaking...\n");
 
-    //wait for finish
-    while (i2s_rec_flag == 0)
-    {
-        if (ide_get_script_status() == false)
-            return 0;
-    }
-    if (i2s_rec_flag == 1)
-    {
-        for (i = 0; i < frame_mov; i++)
-            v_dat[i + frame_mov] = rx_buf[i];
-    }
-    else
-    {
-        for (i = 0; i < frame_mov; i++)
-            v_dat[i + frame_mov] = rx_buf[i + frame_mov];
-    }
-    i2s_rec_flag = 0;
-    while (1)
-    {
-        while (i2s_rec_flag == 0)
-        {
-            if (ide_get_script_status() == false)
-                return 0;
-        }
-        if (i2s_rec_flag == 1)
-        {
-            for (i = 0; i < frame_mov; i++)
-            {
-                v_dat[i] = v_dat[i + frame_mov];
-                v_dat[i + frame_mov] = rx_buf[i];
-            }
-        }
-        else
-        {
-            for (i = 0; i < frame_mov; i++)
-            {
-                v_dat[i] = v_dat[i + frame_mov];
-                v_dat[i + frame_mov] = rx_buf[i + frame_mov];
-            }
-        }
-        i2s_rec_flag = 0;
-        if (VAD2(v_dat, valid_voice, &atap_arg) == 1)
-            break;
-        if (receive_char == 's')
-        {
-            *mtch_dis = dis_err;
-            LOGI(TAG, "send 'c' to start\n");
-            return 0;
-        }
-    }
-    // LOGI(TAG, "vad ok\n");
-    //  if (valid_voice[0].end == ((void *)0)) {
-    //      *mtch_dis=dis_err;
-    //      USART1_LOGI(TAG, "VAD fail ");
-    //      return (void *)0;
-    //  }
+//     //wait for finish
+//     while (i2s_rec_flag == 0)
+//     {
+//         if (ide_get_script_status() == false)
+//             return 0;
+//     }
+//     if (i2s_rec_flag == 1)
+//     {
+//         for (i = 0; i < frame_mov; i++)
+//             v_dat[i + frame_mov] = rx_buf[i];
+//     }
+//     else
+//     {
+//         for (i = 0; i < frame_mov; i++)
+//             v_dat[i + frame_mov] = rx_buf[i + frame_mov];
+//     }
+//     i2s_rec_flag = 0;
+//     while (1)
+//     {
+//         while (i2s_rec_flag == 0)
+//         {
+//             if (ide_get_script_status() == false)
+//                 return 0;
+//         }
+//         if (i2s_rec_flag == 1)
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//             {
+//                 v_dat[i] = v_dat[i + frame_mov];
+//                 v_dat[i + frame_mov] = rx_buf[i];
+//             }
+//         }
+//         else
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//             {
+//                 v_dat[i] = v_dat[i + frame_mov];
+//                 v_dat[i + frame_mov] = rx_buf[i + frame_mov];
+//             }
+//         }
+//         i2s_rec_flag = 0;
+//         if (VAD2(v_dat, valid_voice, &atap_arg) == 1)
+//             break;
+//         if (receive_char == 's')
+//         {
+//             *mtch_dis = dis_err;
+//             LOGI(TAG, "send 'c' to start\n");
+//             return 0;
+//         }
+//     }
 
-    get_mfcc(&(valid_voice[0]), &ftr, &atap_arg);
-    if (ftr.frm_num == 0)
-    {
-        *mtch_dis = dis_err;
-        LOGI(TAG, "MFCC fail ");
-        return 0;
-    }
-    //  for (i = 0; i < ftr.frm_num * mfcc_num; i++) {
-    //      if (i % 12 == 0)
-    //          LOGI(TAG, "\n");
-    //      LOGI(TAG, "%d ", ftr.mfcc_dat[i]);
-    //  }
-    //  ftr.word_num = valid_voice[0].word_num;
-    LOGI(TAG, "MFCC ok\n");
-    i = 0;
-    min_comm = 0;
-    min_dis = dis_max;
-    cycle0 = read_csr(mcycle);
-    for (ftr_addr = ftr_start_addr; ftr_addr < ftr_end_addr; ftr_addr += size_per_ftr)
-    {
-        //  ftr_mdl=(v_ftr_tag*)ftr_addr;
-        ftr_mdl = (v_ftr_tag *)(&ftr_save[ftr_addr / size_per_ftr]);
-        cur_dis = ((ftr_mdl->save_sign) == save_mask) ? dtw(ftr_mdl, &ftr) : dis_err;
-        if ((ftr_mdl->save_sign) == save_mask)
-        {
-            mp_printf(&mp_plat_print, "[MaixPy] no. %d, frm_num = %d, save_mask=%d\r\n", i + 1, ftr_mdl->frm_num, ftr_mdl->save_sign);
-            // LOGI(TAG, "cur_dis=%d\n", cur_dis);
-        }
-        if (cur_dis < min_dis)
-        {
-            min_dis = cur_dis;
-            min_comm = i + 1;
-        }
-        i++;
-    }
-    cycle1 = read_csr(mcycle) - cycle0;
-    // mp_printf(&mp_plat_print, "[MaixPy] recg cycle = 0x%08x\r\n", cycle1);
-    if (min_comm % 4)
-        min_comm = min_comm / ftr_per_comm + 1;
-    else
-        min_comm = min_comm / ftr_per_comm;
+//     // LOGI(TAG, "vad ok\n");
+//     //  if (valid_voice[0].end == ((void *)0)) {
+//     //      *mtch_dis=dis_err;
+//     //      USART1_LOGI(TAG, "VAD fail ");
+//     //      return (void *)0;
+//     //  }
 
-    *mtch_dis = min_dis;
-    return (int)min_comm; //(commstr[min_comm].intst_tr);
+//     get_mfcc(&(valid_voice[0]), &ftr, &atap_arg);
+//     if (ftr.frm_num == 0)
+//     {
+//         *mtch_dis = dis_err;
+//         LOGI(TAG, "MFCC fail ");
+//         return 0;
+//     }
+//     //  for (i = 0; i < ftr.frm_num * mfcc_num; i++) {
+//     //      if (i % 12 == 0)
+//     //          LOGI(TAG, "\n");
+//     //      LOGI(TAG, "%d ", ftr.mfcc_dat[i]);
+//     //  }
+//     //  ftr.word_num = valid_voice[0].word_num;
+//     LOGI(TAG, "MFCC ok\n");
+//     i = 0;
+//     min_comm = 0;
+//     min_dis = dis_max;
+//     cycle0 = read_csr(mcycle);
+//     for (ftr_addr = ftr_start_addr; ftr_addr < ftr_end_addr; ftr_addr += size_per_ftr)
+//     {
+//         //  ftr_mdl=(v_ftr_tag*)ftr_addr;
+//         ftr_mdl = (v_ftr_tag *)(&ftr_save[ftr_addr / size_per_ftr]);
+//         cur_dis = ((ftr_mdl->save_sign) == save_mask) ? dtw(ftr_mdl, &ftr) : dis_err;
+//         if ((ftr_mdl->save_sign) == save_mask)
+//         {
+//             mp_printf(&mp_plat_print, "[MaixPy] no. %d, frm_num = %d, save_mask=%d\r\n", i + 1, ftr_mdl->frm_num, ftr_mdl->save_sign);
+//             // LOGI(TAG, "cur_dis=%d\n", cur_dis);
+//         }
+//         if (cur_dis < min_dis)
+//         {
+//             min_dis = cur_dis;
+//             min_comm = i + 1;
+//         }
+//         i++;
+//     }
+//     cycle1 = read_csr(mcycle) - cycle0;
+//     // mp_printf(&mp_plat_print, "[MaixPy] recg cycle = 0x%08x\r\n", cycle1);
+//     if (min_comm % 4)
+//         min_comm = min_comm / ftr_per_comm + 1;
+//     else
+//         min_comm = min_comm / ftr_per_comm;
+
+//     *mtch_dis = min_dis;
+//     return (int)min_comm; //(commstr[min_comm].intst_tr);
 }

@@ -21,7 +21,7 @@ void normalize(int16_t *mfcc_p, uint16_t frm_num);
 uint32_t fft_out[mfcc_fft_point];
 int16_t fft_in[mfcc_fft_point];
 
-extern uint64_t fft_out_data[512 / 2];
+uint64_t fft_out_data[512 / 2];
 extern void fft_dma_init(void);
 extern volatile fft_t *const fft;
 
