@@ -393,7 +393,7 @@ STATIC mp_obj_t sr_detect_noise(mp_obj_t self_in, mp_obj_t record_in)
     if (self->atap_arg.s_thl > self->user_atap_arg.s_thl) {
         self->sr_status = SR_GET_NOISEING;
     } else {
-        self->sr_status = SR_RECORD_WAIT_SPEACKING;
+        self->sr_status = SR_RECOGNIZER_WORKING;
     }
     return mp_obj_new_int(self->sr_status);
 }
@@ -434,6 +434,11 @@ STATIC const mp_rom_map_elem_t mp_module_sr_locals_dict_table[] = {
 
     {MP_ROM_QSTR(MP_QSTR_add_voice_model), MP_ROM_PTR(&sr_add_voice_model_obj)},
     {MP_ROM_QSTR(MP_QSTR_set_threshold), MP_ROM_PTR(&sr_set_threshold_obj)},
+
+    { MP_ROM_QSTR(MP_QSTR_ERROR), MP_ROM_INT(SR_ERROR) },
+    { MP_ROM_QSTR(MP_QSTR_RECOGNIZER_WORKING), MP_ROM_INT(SR_RECOGNIZER_WORKING) },
+    { MP_ROM_QSTR(MP_QSTR_RECOGNIZER_FINISH), MP_ROM_INT(SR_RECOGNIZER_FINISH) },
+    { MP_ROM_QSTR(MP_QSTR_GET_NOISEING), MP_ROM_INT(SR_GET_NOISEING) },
 
     {MP_ROM_QSTR(MP_QSTR_recognize), MP_ROM_PTR(&sr_recognize_obj)},
 };
