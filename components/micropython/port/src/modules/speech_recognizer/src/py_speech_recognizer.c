@@ -28,6 +28,9 @@
 #define ftr_end_addr (size_per_ftr * ftr_per_comm * comm_num)
 #define ftr_start_addr 0 //(ftr_end_addr-ftr_total_size)
 
+#define VAD_fail 1
+#define MFCC_fail 2
+
 static const char *TAG = __FILE__;
 
 extern const mp_obj_type_t Maix_i2s_type;
@@ -54,6 +57,7 @@ typedef struct _speech_recognizer_obj_t
 STATIC mp_obj_t sr_record(size_t n_args, const mp_obj_t *args)
 {
     mp_printf(&mp_plat_print, "sr_record\r\n");
+    speech_recognizer_obj_t *self = MP_OBJ_TO_PTR(args[0]);
     mp_int_t keyword_num = mp_obj_get_int(args[1]);
     mp_int_t model_num = mp_obj_get_int(args[2]);
     if (keyword_num > 10)
@@ -68,8 +72,33 @@ STATIC mp_obj_t sr_record(size_t n_args, const mp_obj_t *args)
     }
     mp_printf(&mp_plat_print, "[MAIXPY]: record[%d:%d]\n", keyword_num, model_num);
 
-    // speech_recognizer_record(keyword_num, model_num);
+    Maix_audio_obj_t *record = MP_OBJ_TO_PTR(args[3]);
+    
+    // input data
+    audio_t* input = &record->audio;
 
+    if (input->points != VcBuf_Len) {
+        mp_raise_ValueError("record data != speech_recognizer.get_frame_len()");
+    }
+
+    for(int i = 0; i < input->points; i += 1) {
+        self->VcBuf[i] = (input->buf[i] & 0xffff) + 32768;//left an right channle 16 bit resolution
+    }
+
+    noise_atap(self->VcBuf, atap_len, &self->atap_arg);
+	
+    if (VAD2(self->VcBuf, self->valid_voice, &self->atap_arg) == 1) {
+        self->sr_status = SR_ERROR;
+    }
+        
+    get_mfcc(&(self->valid_voice[0]), &self->ftr, &self->atap_arg);
+	if(self->ftr.frm_num==0)
+	{
+		return MFCC_fail;
+	}
+	
+    // addr = ftr_start_addr + keyword_num * size_per_comm + model_num * size_per_ftr;
+	// return save_ftr_mdl(&self->ftr, addr);
     return mp_const_true;
 }
 
@@ -295,7 +324,7 @@ STATIC mp_obj_t sr_recognize(mp_obj_t self_in, mp_obj_t record_in)
         if (VAD2(self->VcBuf, self->valid_voice, &self->atap_arg) == 1) {
             self->sr_status = SR_ERROR;
         } else {
-            // LOGI(TAG, "vad ok\n");
+            LOGI(TAG, "vad ok\n");
             //  if (valid_voice[0].end == ((void *)0)) {
             //      *mtch_dis=dis_err;
             //      USART1_LOGI(TAG, "VAD fail ");
@@ -307,7 +336,8 @@ STATIC mp_obj_t sr_recognize(mp_obj_t self_in, mp_obj_t record_in)
             {
                 LOGI(TAG, "MFCC fail ");
                 self->sr_status = SR_ERROR;
-                return -1;
+                self->result = -1;
+                return mp_obj_new_int(self->sr_status);
             }
             //  for (i = 0; i < ftr.frm_num * mfcc_num; i++) {
             //      if (i % 12 == 0)
@@ -347,13 +377,216 @@ STATIC mp_obj_t sr_recognize(mp_obj_t self_in, mp_obj_t record_in)
 
             if (min_dis != dis_err) {
                 self->sr_status = SR_RECOGNIZER_FINISH;
-                return (int)min_comm;
+                self->result = (int)min_comm;
             }
         }
     }
     return mp_obj_new_int(self->sr_status);
 }
 MP_DEFINE_CONST_FUN_OBJ_2(sr_recognize_obj, sr_recognize);
+
+// uint8_t* spch_recg(uint16_t *v_dat, uint32_t *mtch_dis)
+// {
+// 	uint16_t i;
+// 	uint32_t ftr_addr;
+// 	uint32_t min_dis;
+// 	uint16_t min_comm;
+// 	uint32_t cur_dis;
+// 	v_ftr_tag *ftr_mdl;
+	
+// 	noise_atap(v_dat, atap_len, &atap_arg);
+	
+// 	VAD(v_dat, VcBuf_Len, valid_voice, &atap_arg);
+// 	if(valid_voice[0].end==((void *)0))
+// 	{
+// 		*mtch_dis=dis_err;
+// 		USART1_printf("VAD fail ");
+// 		return (void *)0;
+// 	}
+	
+// 	get_mfcc(&(valid_voice[0]),&ftr,&atap_arg);
+// 	if(ftr.frm_num==0)
+// 	{
+// 		*mtch_dis=dis_err;
+// 		USART1_printf("MFCC fail ");
+// 		return (void *)0;
+// 	}
+	
+// 	i=0;
+// 	min_comm=0;
+// 	min_dis=dis_max;
+// 	for(ftr_addr=ftr_start_addr; ftr_addr<ftr_end_addr; ftr_addr+=size_per_ftr)
+// 	{
+// 		ftr_mdl=(v_ftr_tag*)ftr_addr;
+// 		//USART1_printf("save_mask=%d ",ftr_mdl->save_sign);
+// 		cur_dis=((ftr_mdl->save_sign)==save_mask)?dtw(&ftr,ftr_mdl):dis_err;
+// 		//USART1_printf("cur_dis=%d ",cur_dis);
+// 		if(cur_dis<min_dis)
+// 		{
+// 			min_dis=cur_dis;
+// 			min_comm=i;
+// 		}
+// 		i++;
+// 	}
+// 	min_comm/=ftr_per_comm;
+// 	//USART1_printf("recg end ");
+// 	*mtch_dis=min_dis;
+// 	return (commstr[min_comm].str);
+// }
+
+// STATIC mp_obj_t sr_test(mp_obj_t self_in, mp_obj_t record_in)
+// {
+//         uint16_t i;
+//     uint32_t ftr_addr;
+//     uint32_t min_dis;
+//     uint16_t min_comm;
+//     uint32_t cur_dis;
+//     v_ftr_tag *ftr_mdl;
+//     uint16_t num;
+//     uint16_t frame_index;
+//     uint32_t cycle0, cycle1;
+
+// get_noise2:
+//     frame_index = 0;
+//     const int num = atap_len / frame_mov;
+//     //wait for finish
+//     i2s_rec_flag = 0;
+//     while (1)
+//     {
+//         while (i2s_rec_flag == 0)
+//         {
+//             if (ide_get_script_status() == false)
+//                 return 0;
+//         }
+//         if (i2s_rec_flag == 1)
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//                 v_dat[frame_mov * frame_index + i] = rx_buf[i];
+//         }
+//         else
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//                 v_dat[frame_mov * frame_index + i] = rx_buf[i + frame_mov];
+//         }
+//         i2s_rec_flag = 0;
+//         frame_index++;
+//         if (frame_index >= num)
+//             break;
+//     }
+//     noise_atap(v_dat, atap_len, &atap_arg);
+//     if (atap_arg.s_thl > user_atap_arg.s_thl)
+//     {
+//         sr_status = SR_GET_NOISEING;
+//         mp_printf(&mp_plat_print, "[MaixPy] get noise again...\n");
+//         goto get_noise2;
+//     }
+//     sr_status = SR_RECOGNIZER_WORKING;
+//     mp_printf(&mp_plat_print, "[MaixPy] Please speaking...\n");
+
+//     //wait for finish
+//     while (i2s_rec_flag == 0)
+//     {
+//         if (ide_get_script_status() == false)
+//             return 0;
+//     }
+//     if (i2s_rec_flag == 1)
+//     {
+//         for (i = 0; i < frame_mov; i++)
+//             v_dat[i + frame_mov] = rx_buf[i];
+//     }
+//     else
+//     {
+//         for (i = 0; i < frame_mov; i++)
+//             v_dat[i + frame_mov] = rx_buf[i + frame_mov];
+//     }
+//     i2s_rec_flag = 0;
+//     while (1)
+//     {
+//         while (i2s_rec_flag == 0)
+//         {
+//             if (ide_get_script_status() == false)
+//                 return 0;
+//         }
+//         if (i2s_rec_flag == 1)
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//             {
+//                 v_dat[i] = v_dat[i + frame_mov];
+//                 v_dat[i + frame_mov] = rx_buf[i];
+//             }
+//         }
+//         else
+//         {
+//             for (i = 0; i < frame_mov; i++)
+//             {
+//                 v_dat[i] = v_dat[i + frame_mov];
+//                 v_dat[i + frame_mov] = rx_buf[i + frame_mov];
+//             }
+//         }
+//         i2s_rec_flag = 0;
+//         if (VAD2(v_dat, valid_voice, &atap_arg) == 1)
+//             break;
+//         if (receive_char == 's')
+//         {
+//             *mtch_dis = dis_err;
+//             LOGI(TAG, "send 'c' to start\n");
+//             return 0;
+//         }
+//     }
+
+//     // LOGI(TAG, "vad ok\n");
+//     //  if (valid_voice[0].end == ((void *)0)) {
+//     //      *mtch_dis=dis_err;
+//     //      USART1_LOGI(TAG, "VAD fail ");
+//     //      return (void *)0;
+//     //  }
+
+//     get_mfcc(&(valid_voice[0]), &ftr, &atap_arg);
+//     if (ftr.frm_num == 0)
+//     {
+//         *mtch_dis = dis_err;
+//         LOGI(TAG, "MFCC fail ");
+//         return 0;
+//     }
+//     //  for (i = 0; i < ftr.frm_num * mfcc_num; i++) {
+//     //      if (i % 12 == 0)
+//     //          LOGI(TAG, "\n");
+//     //      LOGI(TAG, "%d ", ftr.mfcc_dat[i]);
+//     //  }
+//     //  ftr.word_num = valid_voice[0].word_num;
+//     LOGI(TAG, "MFCC ok\n");
+//     i = 0;
+//     min_comm = 0;
+//     min_dis = dis_max;
+//     cycle0 = read_csr(mcycle);
+//     for (ftr_addr = ftr_start_addr; ftr_addr < ftr_end_addr; ftr_addr += size_per_ftr)
+//     {
+//         //  ftr_mdl=(v_ftr_tag*)ftr_addr;
+//         v_ftr_tag *ftr_mdl = (v_ftr_tag *)(&ftr_save[ftr_addr / size_per_ftr]);
+//         cur_dis = ((ftr_mdl->save_sign) == save_mask) ? dtw(ftr_mdl, &ftr) : dis_err;
+//         if ((ftr_mdl->save_sign) == save_mask)
+//         {
+//             mp_printf(&mp_plat_print, "[MaixPy] no. %d, frm_num = %d, save_mask=%d\r\n", i + 1, ftr_mdl->frm_num, ftr_mdl->save_sign);
+//             // LOGI(TAG, "cur_dis=%d\n", cur_dis);
+//         }
+//         if (cur_dis < min_dis)
+//         {
+//             min_dis = cur_dis;
+//             min_comm = i + 1;
+//         }
+//         i++;
+//     }
+//     cycle1 = read_csr(mcycle) - cycle0;
+//     // mp_printf(&mp_plat_print, "[MaixPy] recg cycle = 0x%08x\r\n", cycle1);
+//     if (min_comm % 4)
+//         min_comm = min_comm / ftr_per_comm + 1;
+//     else
+//         min_comm = min_comm / ftr_per_comm;
+
+//     *mtch_dis = min_dis;
+//     return (int)min_comm; //(commstr[min_comm].intst_tr);
+// }
+// MP_DEFINE_CONST_FUN_OBJ_1(sr_test_obj, sr_test);
 
 STATIC mp_obj_t sr_get_status(mp_obj_t self_in)
 {
@@ -410,7 +643,7 @@ STATIC mp_obj_t sr_del(mp_obj_t self_in) {
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(sr_del_obj, sr_del);
 
-MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(sr_record_obj, 3, 3, sr_record);
+MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(sr_record_obj, 4, 4, sr_record);
 MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(sr_print_model_obj, 3, 3, sr_print_model);
 MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(sr_get_model_data_info_obj, 3, 3, sr_get_model_data_info);
 MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(sr_get_model_data_obj, 3, 3, sr_get_model_data);
